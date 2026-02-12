@@ -8,6 +8,8 @@ import {
   Camera, Plus, Trash2, Edit2, Image as ImageIcon
 } from 'lucide-react';
 
+const STORAGE_KEY = 'portfolio_data_v9';
+
 const App: React.FC = () => {
   const [data, setData] = useState<PortfolioData>(INITIAL_DATA);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -18,30 +20,35 @@ const App: React.FC = () => {
   const heroFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // Versioned storage key for data persistence
-    const storageKey = 'portfolio_data_v8'; 
-    const saved = localStorage.getItem(storageKey);
+    const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
-        // Merge strategy: ensure the structure is maintained even if saved data is old
         setData(prev => ({
           ...prev,
-          ...parsed,
-          // Deep merge arrays specifically if needed, but here we prioritize saved content
-          projects: parsed.projects || prev.projects,
-          career: parsed.career || prev.career,
-          education: parsed.education || prev.education
+          ...parsed
         }));
       } catch (e) {
-        console.error("Failed to parse saved data, falling back to initial.", e);
+        console.error("Failed to parse saved data", e);
       }
     }
   }, []);
 
-  const saveToLocal = (newData: PortfolioData) => {
-    setData(newData);
-    localStorage.setItem('portfolio_data_v8', JSON.stringify(newData));
+  const persistData = (newData: PortfolioData) => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(newData));
+    } catch (e) {
+      console.error("Storage failed", e);
+      alert("저장 공간이 부족합니다. 이미지 용량을 줄여주세요 (기존 이미지는 유지됩니다).");
+    }
+  };
+
+  const updateField = (field: keyof PortfolioData, value: any) => {
+    setData(prev => {
+      const updated = { ...prev, [field]: value };
+      persistData(updated);
+      return updated;
+    });
   };
 
   const handleAdminLogin = () => {
@@ -54,20 +61,20 @@ const App: React.FC = () => {
     }
   };
 
-  const updateField = (field: keyof PortfolioData, value: any) => {
-    const newData = { ...data, [field]: value };
-    saveToLocal(newData);
-  };
-
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, callback: (base64: string) => void) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        alert("이미지 용량이 너무 큽니다. 2MB 이하의 이미지를 권장합니다.");
+      }
       const reader = new FileReader();
       reader.onloadend = () => {
         callback(reader.result as string);
       };
       reader.readAsDataURL(file);
     }
+    // Reset target to allow same file re-upload if needed
+    e.target.value = '';
   };
 
   const handleNavClick = (id: string) => {
@@ -80,8 +87,12 @@ const App: React.FC = () => {
 
   const deleteProject = (id: string) => {
     if (window.confirm("정말 이 프로젝트를 삭제하시겠습니까?")) {
-      const newProjects = (data.projects || []).filter(p => p.id !== id);
-      updateField('projects', newProjects);
+      setData(prev => {
+        const newProjects = (prev.projects || []).filter(p => p.id !== id);
+        const updated = { ...prev, projects: newProjects };
+        persistData(updated);
+        return updated;
+      });
     }
   };
 
@@ -102,7 +113,11 @@ const App: React.FC = () => {
       ],
       details: ['수행 업무 1', '수행 업무 2']
     };
-    updateField('projects', [newProject, ...(data.projects || [])]);
+    setData(prev => {
+      const updated = { ...prev, projects: [newProject, ...(prev.projects || [])] };
+      persistData(updated);
+      return updated;
+    });
   };
 
   const renderHighlightedText = (text: string = "") => {
@@ -130,7 +145,6 @@ const App: React.FC = () => {
       });
       parts = newParts;
     });
-    
     return parts;
   };
 
@@ -201,17 +215,12 @@ const App: React.FC = () => {
       </nav>
 
       <main className="md:pl-20 relative z-10">
-        {/* HERO SECTION */}
         <section id="HOME" className="min-h-screen flex flex-col md:flex-row border-b border-gray-100 items-stretch scroll-mt-0">
           <div 
             className={`w-full md:w-[35%] h-[50vh] md:h-auto relative overflow-hidden group bg-gray-50 flex items-center justify-center ${isAdmin ? 'cursor-pointer' : ''}`}
             onClick={() => isAdmin && heroFileRef.current?.click()}
           >
-            <img 
-              src={heroImage} 
-              alt="Profile" 
-              className="absolute inset-0 w-full h-full object-cover transition-transform duration-1000 group-hover:scale-105"
-            />
+            <img src={heroImage} alt="Profile" className="absolute inset-0 w-full h-full object-cover transition-transform duration-1000 group-hover:scale-105" />
             <div className="absolute inset-0 bg-point/5 mix-blend-multiply" />
             <div className="absolute inset-0 border-[15px] border-white/20 m-6 pointer-events-none" />
             {isAdmin && (
@@ -221,19 +230,20 @@ const App: React.FC = () => {
               </div>
             )}
             <input 
-              type="file" 
-              ref={heroFileRef} 
-              className="hidden" 
-              accept="image/*" 
+              type="file" ref={heroFileRef} className="hidden" accept="image/*" 
               onChange={(e) => handleImageUpload(e, (base64) => {
-                const projects = [...(data.projects || [])];
-                const heroIdx = projects.findIndex(p => p.id === 'hero-img');
-                if (heroIdx > -1) {
-                  projects[heroIdx].imageUrl = base64;
-                } else {
-                  projects.push({ id: 'hero-img', imageUrl: base64 } as any);
-                }
-                updateField('projects', projects);
+                setData(prev => {
+                  const projects = [...(prev.projects || [])];
+                  const heroIdx = projects.findIndex(p => p.id === 'hero-img');
+                  if (heroIdx > -1) {
+                    projects[heroIdx] = { ...projects[heroIdx], imageUrl: base64 };
+                  } else {
+                    projects.push({ id: 'hero-img', imageUrl: base64 } as any);
+                  }
+                  const updated = { ...prev, projects };
+                  persistData(updated);
+                  return updated;
+                });
               })} 
             />
           </div>
@@ -280,7 +290,6 @@ const App: React.FC = () => {
           </div>
         </section>
 
-        {/* PROFILE SECTION */}
         <section id="PROFILE" className="py-24 px-8 md:px-24 bg-surface border-b border-gray-100 scroll-mt-0">
           <div className="max-w-6xl mx-auto">
             <div className="flex items-center gap-4 mb-20">
@@ -349,14 +358,12 @@ const App: React.FC = () => {
           </div>
         </section>
 
-        {/* CAREER HISTORY SECTION */}
         <section id="CAREER" className="py-24 px-8 md:px-24 bg-white border-b border-gray-100 scroll-mt-0">
           <div className="max-w-6xl mx-auto">
             <div className="flex items-center gap-4 mb-20">
               <div className="h-[2px] w-12 bg-point" />
               <h2 className="text-4xl font-serif font-bold">Career History</h2>
             </div>
-
             <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
               {(data.career || []).map((car) => {
                 const isLotte = car.company.includes('롯데건설');
@@ -386,14 +393,12 @@ const App: React.FC = () => {
           </div>
         </section>
 
-        {/* CAPABILITY SECTION */}
         <section id="CAPABILITY" className="py-24 px-8 md:px-24 bg-surface relative overflow-hidden scroll-mt-0 border-b border-gray-100">
           <div className="max-w-6xl mx-auto relative z-10">
             <div className="flex items-center gap-4 mb-20">
               <div className="h-[2px] w-12 bg-point" />
               <h2 className="text-4xl font-serif font-bold">Core Capabilities</h2>
             </div>
-
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-12">
               {[
                 { 
@@ -438,7 +443,6 @@ const App: React.FC = () => {
           </div>
         </section>
 
-        {/* PROJECTS SECTION */}
         <section id="PROJECTS" className="py-24 px-8 md:px-24 bg-white scroll-mt-0">
           <div className="max-w-6xl mx-auto">
             <div className="flex items-center justify-between mb-20">
@@ -447,7 +451,6 @@ const App: React.FC = () => {
                 <h2 className="text-4xl font-serif font-bold">Project Portfolio</h2>
               </div>
             </div>
-
             <div className="space-y-32">
               {['롯데건설', '은민에스엔디'].map(companyName => (
                 <div key={companyName}>
@@ -457,7 +460,6 @@ const App: React.FC = () => {
                      </span>
                      <div className="flex-1 h-px bg-gray-100" />
                    </div>
-                   
                    <div className="grid grid-cols-1 gap-12">
                     {(data.projects || [])
                       .filter(p => p.id !== 'hero-img' && p.company === companyName)
@@ -467,61 +469,41 @@ const App: React.FC = () => {
                           <div key={proj.id} className="group border border-gray-100 overflow-hidden relative">
                             {isAdmin && (
                               <div className="absolute top-4 right-4 z-20 flex gap-2">
-                                <button 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    deleteProject(proj.id);
-                                  }}
-                                  className="p-2 bg-red-600 text-white rounded-full hover:bg-red-700 shadow-lg"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
+                                <button onClick={(e) => { e.stopPropagation(); deleteProject(proj.id); }} className="p-2 bg-red-600 text-white rounded-full hover:bg-red-700 shadow-lg"><Trash2 size={16} /></button>
                               </div>
                             )}
-                            <div 
-                              className={`flex flex-col md:flex-row ${isJeonju ? 'cursor-default' : 'cursor-pointer'}`}
-                              onClick={() => {
-                                if (isJeonju) return;
-                                setExpandedProject(expandedProject === proj.id ? null : proj.id);
-                              }}
-                            >
+                            <div className={`flex flex-col md:flex-row ${isJeonju ? 'cursor-default' : 'cursor-pointer'}`} onClick={() => { if (isJeonju) return; setExpandedProject(expandedProject === proj.id ? null : proj.id); }}>
                               <div className="w-full md:w-2/5 h-[350px] overflow-hidden relative group/img">
                                 <img src={proj.imageUrl} alt={proj.title} className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all duration-1000 transform group-hover:scale-105" />
                                 <div className="absolute top-6 left-6 bg-point text-white px-4 py-1 text-[10px] font-bold tracking-[0.2em] uppercase z-10">{proj.category}</div>
-                                
                                 {!isJeonju && proj.subImages?.length > 0 && (
                                   <>
-                                    {/* Gallery Indicator Badge */}
                                     <div className="absolute top-6 right-6 bg-black/40 backdrop-blur-md px-3 py-1.5 flex items-center gap-2 border border-white/20 transition-all duration-500 group-hover:bg-point/90 z-10">
                                       <div className="flex gap-0.5 items-center">
-                                        <div className="w-1 h-1 bg-white rounded-full" />
-                                        <div className="w-1 h-1 bg-white rounded-full opacity-60" />
-                                        <div className="w-1 h-1 bg-white rounded-full opacity-30" />
+                                        <div className="w-1 h-1 bg-white rounded-full" /><div className="w-1 h-1 bg-white rounded-full opacity-60" /><div className="w-1 h-1 bg-white rounded-full opacity-30" />
                                       </div>
                                       <span className="text-[10px] font-bold text-white tracking-widest">+{proj.subImages.length}</span>
                                     </div>
-
-                                    {/* Gallery Hover Hint */}
                                     <div className="absolute bottom-6 right-6 opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all duration-500 z-10">
                                       <div className="flex items-center gap-2 bg-white/90 backdrop-blur px-3 py-1.5 shadow-xl border border-gray-100">
-                                        <ImageIcon size={12} className="text-point" />
-                                        <span className="text-[9px] font-bold text-point uppercase tracking-widest">View Gallery</span>
+                                        <ImageIcon size={12} className="text-point" /><span className="text-[9px] font-bold text-point uppercase tracking-widest">View Gallery</span>
                                       </div>
                                     </div>
                                   </>
                                 )}
-
                                 {isAdmin && (
-                                  <div 
-                                    className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity z-20"
+                                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity z-20"
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       const input = document.createElement('input');
-                                      input.type = 'file';
-                                      input.accept = 'image/*';
+                                      input.type = 'file'; input.accept = 'image/*';
                                       input.onchange = (ev) => handleImageUpload(ev as any, (base64) => {
-                                        const newProjects = data.projects.map(p => p.id === proj.id ? { ...p, imageUrl: base64 } : p);
-                                        updateField('projects', newProjects);
+                                        setData(prev => {
+                                          const newProjects = prev.projects.map(p => p.id === proj.id ? { ...p, imageUrl: base64 } : p);
+                                          const updated = { ...prev, projects: newProjects };
+                                          persistData(updated);
+                                          return updated;
+                                        });
                                       });
                                       input.click();
                                     }}
@@ -533,22 +515,24 @@ const App: React.FC = () => {
                               <div className="flex-1 p-10 lg:p-14 flex flex-col justify-center bg-white relative">
                                 {isAdmin ? (
                                   <div className="space-y-4">
-                                    <input 
-                                      className="text-2xl font-serif font-bold w-full border-b focus:border-point outline-none"
-                                      value={proj.title}
-                                      onClick={(e) => e.stopPropagation()}
+                                    <input className="text-2xl font-serif font-bold w-full border-b focus:border-point outline-none" value={proj.title} onClick={(e) => e.stopPropagation()}
                                       onChange={(e) => {
-                                        const newProjects = data.projects.map(p => p.id === proj.id ? { ...p, title: e.target.value } : p);
-                                        updateField('projects', newProjects);
+                                        setData(prev => {
+                                          const newProjects = prev.projects.map(p => p.id === proj.id ? { ...p, title: e.target.value } : p);
+                                          const updated = { ...prev, projects: newProjects };
+                                          persistData(updated);
+                                          return updated;
+                                        });
                                       }}
                                     />
-                                    <input 
-                                      className="text-gray-500 font-light w-full border-b focus:border-point outline-none"
-                                      value={proj.description}
-                                      onClick={(e) => e.stopPropagation()}
+                                    <input className="text-gray-500 font-light w-full border-b focus:border-point outline-none" value={proj.description} onClick={(e) => e.stopPropagation()}
                                       onChange={(e) => {
-                                        const newProjects = data.projects.map(p => p.id === proj.id ? { ...p, description: e.target.value } : p);
-                                        updateField('projects', newProjects);
+                                        setData(prev => {
+                                          const newProjects = prev.projects.map(p => p.id === proj.id ? { ...p, description: e.target.value } : p);
+                                          const updated = { ...prev, projects: newProjects };
+                                          persistData(updated);
+                                          return updated;
+                                        });
                                       }}
                                     />
                                   </div>
@@ -556,9 +540,7 @@ const App: React.FC = () => {
                                   <>
                                     <div className="flex justify-between items-start mb-6">
                                       <span className="text-[11px] text-gray-400 font-bold tracking-widest uppercase">{proj.period}</span>
-                                      {!isJeonju && (
-                                        <ChevronDown size={20} className={`text-point transition-transform duration-500 ${expandedProject === proj.id ? 'rotate-180' : ''}`} />
-                                      )}
+                                      {!isJeonju && <ChevronDown size={20} className={`text-point transition-transform duration-500 ${expandedProject === proj.id ? 'rotate-180' : ''}`} />}
                                     </div>
                                     <h3 className="text-2xl font-serif font-bold mb-6 group-hover:text-point transition-colors leading-relaxed">{proj.title}</h3>
                                     <p className="text-gray-500 font-light leading-relaxed mb-4 text-base">{proj.description}</p>
@@ -566,7 +548,6 @@ const App: React.FC = () => {
                                 )}
                               </div>
                             </div>
-
                             {!isJeonju && (
                               <div className={`transition-all duration-700 ease-in-out overflow-hidden ${expandedProject === proj.id ? 'max-h-[1400px] border-t border-gray-100' : 'max-h-0'}`}>
                                 <div className="p-10 md:p-20 bg-surface grid grid-cols-1 lg:grid-cols-2 gap-20">
@@ -578,20 +559,35 @@ const App: React.FC = () => {
                                           <span className="text-point font-bold text-xl opacity-20 shrink-0">0{idx+1}</span>
                                           {isAdmin ? (
                                             <div className="flex-1 flex gap-2">
-                                              <input 
-                                                className="flex-1 bg-transparent border-b outline-none text-gray-600"
-                                                value={detail}
+                                              <input className="flex-1 bg-transparent border-b outline-none text-gray-600" value={detail}
                                                 onChange={(e) => {
-                                                  const newDetails = [...proj.details];
-                                                  newDetails[idx] = e.target.value;
-                                                  const newProjects = data.projects.map(p => p.id === proj.id ? { ...p, details: newDetails } : p);
-                                                  updateField('projects', newProjects);
+                                                  setData(prev => {
+                                                    const updatedProjects = prev.projects.map(p => {
+                                                      if (p.id === proj.id) {
+                                                        const newDetails = [...p.details];
+                                                        newDetails[idx] = e.target.value;
+                                                        return { ...p, details: newDetails };
+                                                      }
+                                                      return p;
+                                                    });
+                                                    const updated = { ...prev, projects: updatedProjects };
+                                                    persistData(updated);
+                                                    return updated;
+                                                  });
                                                 }}
                                               />
                                               <button onClick={() => {
-                                                const newDetails = proj.details.filter((_, i) => i !== idx);
-                                                const newProjects = data.projects.map(p => p.id === proj.id ? { ...p, details: newDetails } : p);
-                                                updateField('projects', newProjects);
+                                                setData(prev => {
+                                                  const updatedProjects = prev.projects.map(p => {
+                                                    if (p.id === proj.id) {
+                                                      return { ...p, details: p.details.filter((_, i) => i !== idx) };
+                                                    }
+                                                    return p;
+                                                  });
+                                                  const updated = { ...prev, projects: updatedProjects };
+                                                  persistData(updated);
+                                                  return updated;
+                                                });
                                               }} className="text-red-400 hover:text-red-600"><Trash2 size={14}/></button>
                                             </div>
                                           ) : (
@@ -600,14 +596,14 @@ const App: React.FC = () => {
                                         </li>
                                       ))}
                                       {isAdmin && (
-                                        <button 
-                                          onClick={() => {
-                                            const newDetails = [...proj.details, "새 업무 내용"];
-                                            const newProjects = data.projects.map(p => p.id === proj.id ? { ...p, details: newDetails } : p);
-                                            updateField('projects', newProjects);
-                                          }}
-                                          className="flex items-center gap-2 text-xs font-bold text-point py-2 border border-dashed border-point/30 w-full justify-center hover:bg-point/5 transition-colors"
-                                        >
+                                        <button onClick={() => {
+                                          setData(prev => {
+                                            const updatedProjects = prev.projects.map(p => p.id === proj.id ? { ...p, details: [...p.details, "새 업무 내용"] } : p);
+                                            const updated = { ...prev, projects: updatedProjects };
+                                            persistData(updated);
+                                            return updated;
+                                          });
+                                        }} className="flex items-center gap-2 text-xs font-bold text-point py-2 border border-dashed border-point/30 w-full justify-center hover:bg-point/5 transition-colors">
                                           <Plus size={14} /> 상세 내용 추가
                                         </button>
                                       )}
@@ -616,28 +612,30 @@ const App: React.FC = () => {
                                   <div className="grid grid-cols-2 gap-4 h-fit">
                                     {proj.subImages?.map((si, idx) => (
                                       <div key={idx} className="relative group/subimg h-40 overflow-hidden bg-gray-100 border border-white shadow-sm">
-                                        <img 
-                                          src={si} 
-                                          className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-500" 
-                                        />
+                                        <img src={si} className="w-full h-full object-cover grayscale hover:grayscale-0 transition-all duration-500" />
                                         {isAdmin && (
-                                          <div 
-                                            className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/subimg:opacity-100 transition-opacity cursor-pointer"
+                                          <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover/subimg:opacity-100 transition-opacity cursor-pointer"
                                             onClick={() => {
                                               const input = document.createElement('input');
-                                              input.type = 'file';
-                                              input.accept = 'image/*';
+                                              input.type = 'file'; input.accept = 'image/*';
                                               input.onchange = (ev) => handleImageUpload(ev as any, (base64) => {
-                                                const newSubImages = [...(proj.subImages || [])];
-                                                newSubImages[idx] = base64;
-                                                const newProjects = data.projects.map(p => p.id === proj.id ? { ...p, subImages: newSubImages } : p);
-                                                updateField('projects', newProjects);
+                                                setData(prev => {
+                                                  const updatedProjects = prev.projects.map(p => {
+                                                    if (p.id === proj.id) {
+                                                      const newSubs = [...(p.subImages || [])];
+                                                      newSubs[idx] = base64;
+                                                      return { ...p, subImages: newSubs };
+                                                    }
+                                                    return p;
+                                                  });
+                                                  const updated = { ...prev, projects: updatedProjects };
+                                                  persistData(updated);
+                                                  return updated;
+                                                });
                                               });
                                               input.click();
                                             }}
-                                          >
-                                            <Camera className="text-white" size={20} />
-                                          </div>
+                                          ><Camera className="text-white" size={20} /></div>
                                         )}
                                       </div>
                                     ))}
@@ -655,7 +653,6 @@ const App: React.FC = () => {
           </div>
         </section>
 
-        {/* CONTACT SECTION */}
         <section id="CONTACT" className="py-32 px-8 md:px-24 bg-gray-900 text-white relative overflow-hidden scroll-mt-0">
           <div className="absolute bottom-0 left-0 w-full h-1/2 arch-grid opacity-5 pointer-events-none" />
           <div className="max-w-4xl mx-auto text-center relative z-10">
@@ -664,7 +661,6 @@ const App: React.FC = () => {
             <p className="text-xl text-gray-400 font-light mb-20 max-w-2xl mx-auto leading-relaxed italic">
               "기본과 원칙을 준수하며 정밀한 데이터 분석을 바탕으로 현장의 모든 난관을 극복합니다. 공간의 완성도를 끝까지 책임지겠습니다."
             </p>
-            
             <div className="grid grid-cols-1 md:grid-cols-3 gap-16 border-t border-white/10 pt-20">
               <div className="space-y-4">
                 <p className="text-[10px] uppercase tracking-widest opacity-40 font-bold">Mobile</p>
@@ -676,15 +672,10 @@ const App: React.FC = () => {
               </div>
               <div className="space-y-4">
                 <p className="text-[10px] uppercase tracking-widest opacity-40 font-bold">Location</p>
-                <div className="flex items-center justify-center gap-2 text-2xl font-serif font-bold">
-                  Republic of Korea
-                </div>
+                <div className="flex items-center justify-center gap-2 text-2xl font-serif font-bold">Republic of Korea</div>
               </div>
             </div>
-
-            <div className="mt-32 pt-12 border-t border-white/5 opacity-20 text-[9px] uppercase tracking-[0.4em]">
-              &copy; 2025 HWANG JIN GWAN. ALL RIGHTS RESERVED.
-            </div>
+            <div className="mt-32 pt-12 border-t border-white/5 opacity-20 text-[9px] uppercase tracking-[0.4em]">&copy; 2025 HWANG JIN GWAN. ALL RIGHTS RESERVED.</div>
           </div>
         </section>
       </main>
