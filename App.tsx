@@ -18,15 +18,30 @@ const App: React.FC = () => {
   const heroFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const saved = localStorage.getItem('portfolio_data_v7');
+    // Versioned storage key for data persistence
+    const storageKey = 'portfolio_data_v8'; 
+    const saved = localStorage.getItem(storageKey);
     if (saved) {
-      setData(JSON.parse(saved));
+      try {
+        const parsed = JSON.parse(saved);
+        // Merge strategy: ensure the structure is maintained even if saved data is old
+        setData(prev => ({
+          ...prev,
+          ...parsed,
+          // Deep merge arrays specifically if needed, but here we prioritize saved content
+          projects: parsed.projects || prev.projects,
+          career: parsed.career || prev.career,
+          education: parsed.education || prev.education
+        }));
+      } catch (e) {
+        console.error("Failed to parse saved data, falling back to initial.", e);
+      }
     }
   }, []);
 
   const saveToLocal = (newData: PortfolioData) => {
     setData(newData);
-    localStorage.setItem('portfolio_data_v7', JSON.stringify(newData));
+    localStorage.setItem('portfolio_data_v8', JSON.stringify(newData));
   };
 
   const handleAdminLogin = () => {
@@ -57,12 +72,15 @@ const App: React.FC = () => {
 
   const handleNavClick = (id: string) => {
     setActiveTab(id as any);
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+    const element = document.getElementById(id);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth' });
+    }
   };
 
   const deleteProject = (id: string) => {
     if (window.confirm("정말 이 프로젝트를 삭제하시겠습니까?")) {
-      const newProjects = data.projects.filter(p => p.id !== id);
+      const newProjects = (data.projects || []).filter(p => p.id !== id);
       updateField('projects', newProjects);
     }
   };
@@ -84,10 +102,10 @@ const App: React.FC = () => {
       ],
       details: ['수행 업무 1', '수행 업무 2']
     };
-    updateField('projects', [newProject, ...data.projects]);
+    updateField('projects', [newProject, ...(data.projects || [])]);
   };
 
-  const renderHighlightedText = (text: string) => {
+  const renderHighlightedText = (text: string = "") => {
     const keywords = ["공간의 가치", "증명", "기술 전문가"];
     let parts: React.ReactNode[] = [text];
     
@@ -116,7 +134,7 @@ const App: React.FC = () => {
     return parts;
   };
 
-  const heroImage = data.projects.find(p => p.id === 'hero-img')?.imageUrl || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?grayscale&auto=format&fit=crop&q=80&w=1200";
+  const heroImage = (data.projects || []).find(p => p.id === 'hero-img')?.imageUrl || "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?grayscale&auto=format&fit=crop&q=80&w=1200";
 
   return (
     <div className="min-h-screen bg-white font-sans text-gray-900 selection:bg-point selection:text-white">
@@ -125,7 +143,7 @@ const App: React.FC = () => {
       {/* Admin Control Bar */}
       <div className="fixed top-6 right-6 z-50 flex gap-2">
         {!isAdmin ? (
-          <button onClick={() => setShowAdminLogin(true)} className="p-2 bg-white/80 backdrop-blur border border-gray-200 rounded hover:border-point transition-colors">
+          <button onClick={() => setShowAdminLogin(true)} className="p-2 bg-white/80 backdrop-blur border border-gray-200 rounded hover:border-point transition-colors shadow-sm">
             <Settings size={20} className="text-gray-400" />
           </button>
         ) : (
@@ -160,7 +178,7 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Navigation */}
+      {/* Sidebar Navigation */}
       <nav className="fixed left-0 top-0 bottom-0 w-20 border-r border-gray-100 bg-white/90 backdrop-blur-md z-40 hidden md:flex flex-col items-center py-12">
         <button 
           onClick={() => handleNavClick('HOME')}
@@ -208,7 +226,7 @@ const App: React.FC = () => {
               className="hidden" 
               accept="image/*" 
               onChange={(e) => handleImageUpload(e, (base64) => {
-                const projects = [...data.projects];
+                const projects = [...(data.projects || [])];
                 const heroIdx = projects.findIndex(p => p.id === 'hero-img');
                 if (heroIdx > -1) {
                   projects[heroIdx].imageUrl = base64;
@@ -226,8 +244,8 @@ const App: React.FC = () => {
               <h1 className="text-4xl md:text-5xl lg:text-7xl font-serif font-bold leading-[1.2] mb-12">
                 {isAdmin ? (
                   <div className="space-y-4">
-                    <input className="w-full p-2 text-xl border rounded" value={data.heroLine1} onChange={(e) => updateField('heroLine1', e.target.value)} />
-                    <input className="w-full p-2 text-xl border rounded" value={data.heroLine2} onChange={(e) => updateField('heroLine2', e.target.value)} />
+                    <input className="w-full p-2 text-xl border rounded outline-none focus:border-point" value={data.heroLine1} onChange={(e) => updateField('heroLine1', e.target.value)} />
+                    <input className="w-full p-2 text-xl border rounded outline-none focus:border-point" value={data.heroLine2} onChange={(e) => updateField('heroLine2', e.target.value)} />
                   </div>
                 ) : (
                   <>
@@ -238,7 +256,7 @@ const App: React.FC = () => {
               </h1>
               <p className="text-lg text-gray-500 font-light leading-relaxed mb-16 italic font-serif">
                 {isAdmin ? (
-                  <textarea className="w-full p-2 text-sm border h-24 rounded" value={data.subHeroText} onChange={(e) => updateField('subHeroText', e.target.value)} />
+                  <textarea className="w-full p-2 text-sm border h-24 rounded outline-none focus:border-point" value={data.subHeroText} onChange={(e) => updateField('subHeroText', e.target.value)} />
                 ) : data.subHeroText}
               </p>
 
@@ -277,7 +295,7 @@ const App: React.FC = () => {
                     <GraduationCap size={16} className="text-point" /> Education
                   </h3>
                   <div className="space-y-8">
-                    {data.education.map(edu => (
+                    {(data.education || []).map(edu => (
                       <div key={edu.id} className="relative pl-6 border-l border-gray-200">
                         <div className="absolute -left-[4.5px] top-1.5 w-2 h-2 rounded-full bg-point" />
                         <p className="font-bold text-lg leading-tight">{edu.school}</p>
@@ -291,7 +309,7 @@ const App: React.FC = () => {
                     <Award size={16} className="text-point" /> Certifications
                   </h3>
                   <div className="space-y-3">
-                    {data.certifications.map(cert => (
+                    {(data.certifications || []).map(cert => (
                       <div key={cert.id} className="flex items-center justify-between p-3 bg-white border border-gray-100 shadow-sm rounded-sm">
                         <div className="flex items-center gap-3">
                           <CheckCircle size={14} className="text-point opacity-50" />
@@ -309,7 +327,7 @@ const App: React.FC = () => {
                   KICA 한국건설인협회
                 </h3>
                 <div className="space-y-2">
-                  {data.kica.map(k => (
+                  {(data.kica || []).map(k => (
                     <div key={k.category} className="flex items-center justify-between p-5 border border-gray-200 bg-white group hover:border-point transition-colors">
                       <span className="text-xs font-bold text-gray-400 group-hover:text-point">{k.category}</span>
                       <div className="flex items-end gap-1">
@@ -340,7 +358,7 @@ const App: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-              {data.career.map((car) => {
+              {(data.career || []).map((car) => {
                 const isLotte = car.company.includes('롯데건설');
                 return (
                   <div key={car.id} className="group h-full flex flex-col">
@@ -441,7 +459,7 @@ const App: React.FC = () => {
                    </div>
                    
                    <div className="grid grid-cols-1 gap-12">
-                    {data.projects
+                    {(data.projects || [])
                       .filter(p => p.id !== 'hero-img' && p.company === companyName)
                       .map((proj) => {
                         const isJeonju = proj.id === 'p_jeonju';
